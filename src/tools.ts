@@ -1,9 +1,11 @@
 import { tool } from '@langchain/core/tools';
-import { bn, Provider, Wallet } from 'fuels';
+import { bn, Provider, Wallet, Contract } from 'fuels';
 import { MiraAmm, type PoolId } from 'mira-dex-ts';
 import { z } from 'zod';
 import { getAllVerifiedFuelAssets } from './utils/assets.js';
 import { getTxExplorerUrl } from './utils/explorer.js';
+import { Market } from './types/Market.js';
+
 
 export const transferToWallet = async ({
   to,
@@ -108,4 +110,49 @@ export const swapEthForUSDCTool = tool(swapEthForUSDC, {
   }),
 });
 
-export const tools = [transferTool, swapEthForUSDCTool];
+export const supplyCollateral = async ({ amount, symbol }: { amount: number, symbol: string }) => {
+  const provider = await Provider.create(
+    'https://mainnet.fuel.network/v1/graphql',
+  );
+  const wallet = Wallet.fromPrivateKey(
+    process.env.FUEL_WALLET_PRIVATE_KEY as string,
+    provider,
+  );
+
+  const marketContractId = '0x657ab45a6eb98a4893a99fd104347179151e8b3828fd8f2a108cc09770d1ebae';
+  const marketContract: Market = new Market(marketContractId, wallet);
+
+  const allAssets = await getAllVerifiedFuelAssets();
+  const asset = allAssets.find((asset) => asset.symbol === symbol);
+  const assetId = asset?.assetId;
+
+  const weiAmount = bn.parseUnits(amount.toString(), asset?.decimals)
+
+  const tx: any = await marketContract.functions
+  .supply_collateral()
+  .callParams({
+    forward: {
+      assetId: assetId,
+      amount: weiAmount,
+    } as any,
+  })
+  .call();
+
+  const { id, status } = await tx.waitForResult();
+
+  return {
+    status,
+    id,
+  };
+};
+
+export const supplyCollateralTool = tool(supplyCollateral, {
+  name: 'supply_collateral',
+  description: 'Supply collateral on swaylend',
+  schema: z.object({
+    amount: z.number().describe('The amount to lend'),
+    symbol: z.string().describe('The asset symbol to lend. eg. USDC, ETH')
+  }),
+});
+
+export const tools = [transferTool, swapEthForUSDCTool, supplyCollateralTool];
